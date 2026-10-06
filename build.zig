@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     var target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const IS_DEV = if (optimize == .Debug) true else false;
+    const IS_DEV = if (optimize == .debug) true else false;
     const enable_mdbx_debug = b.option(bool, "mdbx-debug", "Compile libmdbx with MDBX_DEBUG=2 (verbose runtime asserts and logs)") orelse false;
 
     // For Linux GNU targets, always target glibc 2.31 for broad compatibility
@@ -19,8 +19,6 @@ pub fn build(b: *std.Build) void {
     }
 
     const mdbx = b.addModule("lmdbx", .{ .root_source_file = b.path("src/lib.zig") });
-    const zbench_dep = b.dependency("zbench", .{});
-    const zbench_mod = b.addModule("zbench", .{ .root_source_file = zbench_dep.path("src/zbench.zig") });
 
     // Add CPU features polyfill until https://github.com/ziglang/zig/pull/20081 gets merged
     const cpuf_dep = b.dependency("cpu_features", .{});
@@ -70,10 +68,6 @@ pub fn build(b: *std.Build) void {
             if (enable_mdbx_debug) "-DMDBX_DEBUG=2" else "-DMDBX_DEBUG=-1",
             if (enable_mdbx_debug) "-DMDBX_BUILD_FLAGS=\"UNDEBUG\"" else "-DMDBX_BUILD_FLAGS=\"DNDEBUG=1\"",
 
-            // Fix for LLVM 19+ requiring evex512 for AVX-512 512-bit intrinsics (Zig 0.13+)
-            // See: https://github.com/ziglang/zig/issues/20414
-            if (target.result.cpu.arch == .x86_64) "-includemdbx_avx512_fix.h" else "",
-
             // Cross compilation to windows breaks without "errno.h"
             if (target.result.os.tag == .windows) "-includeerrno.h" else "",
 
@@ -106,36 +100,11 @@ pub fn build(b: *std.Build) void {
 
     b.step("test", "Run libMDBX tests").dependOn(&test_runner.step);
 
-    // Benchmarks
-    const bench_mod = b.createModule(.{
-        .root_source_file = b.path("benchmarks/bench.zig"),
-        .target = target,
-        .optimize = if (IS_DEV) .Debug else .ReleaseFast,
-        .link_libc = true,
-        .imports = &.{ .{ .name = "lmdbx", .module = mdbx }, .{ .name = "zbench", .module = zbench_mod } },
-    });
-    const bench = b.addExecutable(.{
-        .name = "lmdbx-bench",
-        .root_module = bench_mod,
-    });
-
-    b.installArtifact(bench);
-
-    // Linker flags for libMDBX
-    bench.link_gc_sections = true;
-    bench.link_z_relro = true;
-
-    const bench_runner = b.addRunArtifact(bench);
-    if (b.args) |args| {
-        bench_runner.addArgs(args);
-    }
-    b.step("bench", "Run libMDBX benchmarks").dependOn(&bench_runner.step);
-
     // Multithreaded benchmark
     const bench_mt_mod = b.createModule(.{
         .root_source_file = b.path("benchmarks/multithreaded.zig"),
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = .fast,
         .link_libc = true,
         .imports = &.{.{ .name = "lmdbx", .module = mdbx }},
     });
@@ -149,16 +118,14 @@ pub fn build(b: *std.Build) void {
     bench_mt.link_z_relro = true;
 
     const bench_mt_runner = b.addRunArtifact(bench_mt);
-    if (b.args) |args| {
-        bench_mt_runner.addArgs(args);
-    }
+    bench_mt_runner.addPassthruArgs();
     b.step("bench-mt", "Run multithreaded libMDBX benchmark").dependOn(&bench_mt_runner.step);
 
     // DB generator
     const gen_mod = b.createModule(.{
         .root_source_file = b.path("benchmarks/generate_db.zig"),
         .target = target,
-        .optimize = if (IS_DEV) .Debug else .ReleaseFast,
+        .optimize = if (IS_DEV) .debug else .fast,
         .link_libc = true,
         .imports = &.{.{ .name = "lmdbx", .module = mdbx }},
     });
@@ -170,8 +137,6 @@ pub fn build(b: *std.Build) void {
     gen.link_gc_sections = true;
     gen.link_z_relro = true;
     const gen_runner = b.addRunArtifact(gen);
-    if (b.args) |args| {
-        gen_runner.addArgs(args);
-    }
+    gen_runner.addPassthruArgs();
     b.step("gen-db", "Generate MDBX database").dependOn(&gen_runner.step);
 }
