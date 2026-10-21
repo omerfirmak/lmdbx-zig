@@ -173,9 +173,12 @@ pub const SeekResult = struct {
     entry: Entry,
 };
 
-fn seekBound(self: Cursor, key: []const u8, op: c.MDBX_cursor_op) !?SeekResult {
+fn seekBound(self: Cursor, key: []const u8, value: ?[]const u8, op: c.MDBX_cursor_op) !?SeekResult {
     var k: c.MDBX_val = .{ .iov_len = key.len, .iov_base = @ptrFromInt(@intFromPtr(key.ptr)) };
-    var v: c.MDBX_val = .{ .iov_len = 0, .iov_base = null };
+    var v: c.MDBX_val = if (value) |val|
+        .{ .iov_len = val.len, .iov_base = @ptrFromInt(@intFromPtr(val.ptr)) }
+    else
+        .{ .iov_len = 0, .iov_base = null };
     const rc = c.mdbx_cursor_get(self.ptr, &k, &v, op);
     switch (rc) {
         c.MDBX_NOTFOUND => return null,
@@ -193,12 +196,16 @@ fn seekBound(self: Cursor, key: []const u8, op: c.MDBX_cursor_op) !?SeekResult {
 
 /// Position on the smallest key >= `key`.
 pub fn seekLowerBound(self: Cursor, key: []const u8) !?SeekResult {
-    return self.seekBound(key, c.MDBX_SET_LOWERBOUND);
+    return self.seekBound(key, null, c.MDBX_SET_LOWERBOUND);
 }
 
 /// Position on the smallest key > `key`.
 pub fn seekUpperBound(self: Cursor, key: []const u8) !?SeekResult {
-    return self.seekBound(key, c.MDBX_SET_UPPERBOUND);
+    return self.seekBound(key, null, c.MDBX_SET_UPPERBOUND);
+}
+
+pub fn seekDupLowerBound(self: Cursor, key: []const u8, value: []const u8) !?SeekResult {
+    return self.seekBound(key, value, c.MDBX_GET_BOTH_RANGE);
 }
 
 fn moveOptional(self: Cursor, op: c.MDBX_cursor_op) !?Entry {
@@ -290,20 +297,10 @@ pub fn transaction(self: Cursor) ?Transaction {
 }
 
 /// Insert/update at this cursor's position.
-pub fn put(self: Cursor, key: []const u8, value: []const u8, flag: Database.SetFlag) !void {
+pub fn put(self: Cursor, key: []const u8, value: []const u8, flags: Database.SetFlag) !void {
     var k: c.MDBX_val = .{ .iov_len = key.len, .iov_base = @ptrFromInt(@intFromPtr(key.ptr)) };
     var v: c.MDBX_val = .{ .iov_len = value.len, .iov_base = @ptrFromInt(@intFromPtr(value.ptr)) };
-    var flags: c_uint = 0;
-    switch (flag) {
-        .Upsert => {},
-        .Create => flags |= c.MDBX_NOOVERWRITE,
-        .Update => flags |= c.MDBX_CURRENT,
-        .Append => flags |= c.MDBX_APPEND,
-        .AppendDup => flags |= c.MDBX_APPENDDUP,
-        .NoDupData => flags |= c.MDBX_NODUPDATA,
-        .MultipleWrite => flags |= c.MDBX_MULTIPLE,
-    }
-    try throw(c.mdbx_cursor_put(self.ptr, &k, &v, flags));
+    try throw(c.mdbx_cursor_put(self.ptr, &k, &v, flags.toC()));
 }
 
 pub const DeleteFlag = enum {
@@ -416,7 +413,10 @@ pub const Op = enum(c_int) {
 };
 
 /// Result returned by a scan predicate.
-pub const PredicateResult = enum { stop, continue_, };
+pub const PredicateResult = enum {
+    stop,
+    continue_,
+};
 
 /// Predicate invoked for each key/value visited by `scan`/`scanFrom`.
 pub fn Predicate(comptime Context: type) type {
@@ -453,7 +453,7 @@ pub fn scan(
     turn_op: Op,
 ) !bool {
     const cb = scanThunk(Context, pred);
-    const rc = c.mdbx_cursor_scan(self.ptr, cb, ctx, @bitCast(@as(c_int, @intFromEnum(start_op))), @bitCast(@as(c_int, @intFromEnum(turn_op))), null);
+    const rc = c.mdbx_cursor_scan(self.ptr, cb, ctx, @bitCast(@as(c_int, @backingInt(start_op))), @bitCast(@as(c_int, @backingInt(turn_op))), null);
     if (rc == c.MDBX_RESULT_TRUE) return true;
     if (rc == c.MDBX_NOTFOUND) return false;
     try throw(rc);
@@ -474,7 +474,7 @@ pub fn scanFrom(
     const cb = scanThunk(Context, pred);
     var k: c.MDBX_val = .{ .iov_len = from_key.len, .iov_base = @ptrFromInt(@intFromPtr(from_key.ptr)) };
     var v: c.MDBX_val = .{ .iov_len = from_value.len, .iov_base = @ptrFromInt(@intFromPtr(from_value.ptr)) };
-    const rc = c.mdbx_cursor_scan_from(self.ptr, cb, ctx, @bitCast(@as(c_int, @intFromEnum(from_op))), &k, &v, @bitCast(@as(c_int, @intFromEnum(turn_op))), null);
+    const rc = c.mdbx_cursor_scan_from(self.ptr, cb, ctx, @bitCast(@as(c_int, @backingInt(from_op))), &k, &v, @bitCast(@as(c_int, @backingInt(turn_op))), null);
     if (rc == c.MDBX_RESULT_TRUE) return true;
     if (rc == c.MDBX_NOTFOUND) return false;
     try throw(rc);

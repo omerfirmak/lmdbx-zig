@@ -56,16 +56,49 @@ pub const Stat = struct {
 };
 
 /// Set flags
-pub const SetFlag = enum {
-    Create,
-    Update,
-    Upsert,
-    Append,
-    AppendDup,
+pub const SetFlag = struct {
+    /// Fail with KeyExist if the key already exists (MDBX_NOOVERWRITE).
+    no_overwrite: bool = false,
+    /// Overwrite the current record (MDBX_CURRENT).
+    current: bool = false,
+    append: bool = false,
+    append_dup: bool = false,
     /// For `dup_sort` databases: don't insert if the {key,value} pair already exists.
-    NoDupData,
+    no_dup_data: bool = false,
     /// For `dup_sort` databases: write a contiguous batch of pre-sorted values for one key.
-    MultipleWrite,
+    multiple: bool = false,
+
+    // Presets, usable as `.Upsert`, `.Create`, ... at call sites.
+    pub const Upsert: SetFlag = .{};
+    pub const Create: SetFlag = .{ .no_overwrite = true };
+    pub const Update: SetFlag = .{ .current = true };
+    pub const Append: SetFlag = .{ .append = true };
+    pub const AppendDup: SetFlag = .{ .append_dup = true };
+    pub const NoDupData: SetFlag = .{ .no_dup_data = true };
+    pub const MultipleWrite: SetFlag = .{ .multiple = true };
+
+    /// Union of two flag sets, e.g. `SetFlag.AppendDup.with(.NoDupData)`.
+    pub fn with(a: SetFlag, b: SetFlag) SetFlag {
+        return .{
+            .no_overwrite = a.no_overwrite or b.no_overwrite,
+            .current = a.current or b.current,
+            .append = a.append or b.append,
+            .append_dup = a.append_dup or b.append_dup,
+            .no_dup_data = a.no_dup_data or b.no_dup_data,
+            .multiple = a.multiple or b.multiple,
+        };
+    }
+
+    pub fn toC(self: SetFlag) c_uint {
+        var f: c_uint = 0;
+        if (self.no_overwrite) f |= c.MDBX_NOOVERWRITE;
+        if (self.current) f |= c.MDBX_CURRENT;
+        if (self.append) f |= c.MDBX_APPEND;
+        if (self.append_dup) f |= c.MDBX_APPENDDUP;
+        if (self.no_dup_data) f |= c.MDBX_NODUPDATA;
+        if (self.multiple) f |= c.MDBX_MULTIPLE;
+        return f;
+    }
 };
 
 /// Replace flags
@@ -121,24 +154,12 @@ pub fn getEx(self: Database, key: []const u8) !?GetExResult {
     };
 }
 
-
 /// Set a record
-pub fn set(self: Database, key: []const u8, value: []const u8, flag: SetFlag) !void {
+pub fn set(self: Database, key: []const u8, value: []const u8, flags: SetFlag) !void {
     var k: c.MDBX_val = .{ .iov_len = key.len, .iov_base = @as([*]u8, @ptrFromInt(@intFromPtr(key.ptr))) };
     var v: c.MDBX_val = .{ .iov_len = value.len, .iov_base = @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr))) };
 
-    var flags: c_uint = 0;
-    switch (flag) {
-        .Upsert => {},
-        .Create => flags |= c.MDBX_NOOVERWRITE,
-        .Update => flags |= c.MDBX_CURRENT,
-        .Append => flags |= c.MDBX_APPEND,
-        .AppendDup => flags |= c.MDBX_APPENDDUP,
-        .NoDupData => flags |= c.MDBX_NODUPDATA,
-        .MultipleWrite => flags |= c.MDBX_MULTIPLE,
-    }
-
-    try throw(c.mdbx_put(self.txn.ptr, self.dbi, &k, &v, flags));
+    try throw(c.mdbx_put(self.txn.ptr, self.dbi, &k, &v, flags.toC()));
 }
 
 /// Replace a record and optionally return the previous value.
@@ -177,7 +198,6 @@ pub fn replace(self: Database, key: []const u8, new_value: ?[]const u8, old_valu
     if (old_val.iov_base == null) return null;
     return @as([*]u8, @ptrCast(old_val.iov_base))[0..old_val.iov_len];
 }
-
 
 /// Delete a record by key
 pub fn delete(self: Database, key: []const u8) !void {
@@ -335,7 +355,7 @@ pub fn cacheGet(self: Database, key: []const u8, entry: *CacheEntry) CacheResult
         null;
     return .{
         .value = value,
-        .status = @enumFromInt(r.status),
+        .status = @fromBackingInt(@intCast(r.status)),
         .err_code = r.errcode,
     };
 }
@@ -351,7 +371,7 @@ pub fn cacheGetSingleThreaded(self: Database, key: []const u8, entry: *CacheEntr
         null;
     return .{
         .value = value,
-        .status = @enumFromInt(r.status),
+        .status = @fromBackingInt(@intCast(r.status)),
         .err_code = r.errcode,
     };
 }

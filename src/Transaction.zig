@@ -11,11 +11,7 @@ const Transaction = @This();
 pub const Canary = c.MDBX_canary;
 
 /// Transaction init options
-pub const Options = struct {
-    mode: Mode = .ReadWrite,
-    parent: ?Transaction = null,
-    txn_try: bool = false
-};
+pub const Options = struct { mode: Mode = .ReadWrite, parent: ?Transaction = null, txn_try: bool = false };
 
 /// Mode of this transaction
 pub const Mode = enum { ReadOnly, ReadWrite };
@@ -33,7 +29,7 @@ pub fn init(env: Environment, options: Options) !Transaction {
         },
         .ReadWrite => {},
     }
-    
+
     if (options.txn_try) flags |= c.MDBX_TXN_TRY;
 
     // Get parent transaction if provided
@@ -181,9 +177,9 @@ pub fn get(self: Transaction, key: []const u8) !?[]const u8 {
 }
 
 /// Set a record
-pub fn set(self: Transaction, key: []const u8, value: []const u8, flag: Database.SetFlag) !void {
+pub fn set(self: Transaction, key: []const u8, value: []const u8, flags: Database.SetFlag) !void {
     const db = try Database.open(self, null, .{});
-    try db.set(key, value, flag);
+    try db.set(key, value, flags);
 }
 
 /// Delete a record by key

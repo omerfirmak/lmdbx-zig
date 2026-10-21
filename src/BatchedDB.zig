@@ -210,8 +210,8 @@ pub const Transaction = struct {
         return try self.txn.get(key);
     }
 
-    pub fn set(self: Transaction, key: []const u8, value: []const u8, flag: @import("Database.zig").SetFlag) !void {
-        try self.txn.set(key, value, flag);
+    pub fn set(self: Transaction, key: []const u8, value: []const u8, flags: @import("Database.zig").SetFlag) !void {
+        try self.txn.set(key, value, flags);
     }
 
     pub fn delete(self: Transaction, key: []const u8) !void {

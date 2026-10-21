@@ -284,7 +284,7 @@ pub const Transaction = struct {
     pub fn getEqualOrGreat(self: Transaction, key: []const u8) !?Cursor.Entry
 
     pub fn get(self: Transaction, key: []const u8) !?[]const u8
-    pub fn set(self: Transaction, key: []const u8, value: []const u8, flag: Database.SetFlag) !void
+    pub fn set(self: Transaction, key: []const u8, value: []const u8, flags: Database.SetFlag) !void
     pub fn delete(self: Transaction, key: []const u8) !void
 
     pub fn cursor(self: Transaction) !Cursor
@@ -317,8 +317,20 @@ pub const Database = struct {
         entries: usize,
     };
 
-    pub const SetFlag = enum {
-        Create, Update, Upsert, Append, AppendDup
+    pub const SetFlag = struct {
+        no_overwrite: bool = false,
+        current: bool = false,
+        append: bool = false,
+        append_dup: bool = false,
+        no_dup_data: bool = false,
+        multiple: bool = false,
+
+        // Presets: pass as `.Upsert`, `.Create`, ...
+        pub const Upsert, Create, Update, Append, AppendDup, NoDupData, MultipleWrite: SetFlag;
+
+        /// Combine flags, e.g. `SetFlag.AppendDup.with(.NoDupData)`
+        /// or `.{ .append_dup = true, .no_dup_data = true }`.
+        pub fn with(a: SetFlag, b: SetFlag) SetFlag
     };
 
     pub const ReplaceFlag = enum {
@@ -333,7 +345,7 @@ pub const Database = struct {
     pub fn open(txn: Transaction, name: ?[*:0]const u8, options: Options) !Database
 
     pub fn get(self: Database, key: []const u8) !?[]const u8
-    pub fn set(self: Database, key: []const u8, value: []const u8, flag: SetFlag) !void
+    pub fn set(self: Database, key: []const u8, value: []const u8, flags: SetFlag) !void
     pub fn delete(self: Database, key: []const u8) !void
     pub fn replace(self: Database, key: []const u8, new_value: ?[]const u8, old_value: ?[]const u8, flag: ReplaceFlag) !?[]const u8
     pub fn drop(self: Database, delete_dbi: bool) !void

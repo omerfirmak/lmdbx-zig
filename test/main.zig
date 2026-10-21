@@ -1369,3 +1369,23 @@ test "database: cacheGet returns the value" {
     try expect(r.value != null);
     try expectEqualSlices(u8, "world", r.value.?);
 }
+
+test "combined set flags" {
+    const SetFlag = lmdb.Database.SetFlag;
+    try expectEqual(SetFlag{ .append_dup = true, .no_dup_data = true }, SetFlag.AppendDup.with(.NoDupData));
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const env = try open(std.testing.io, tmp.dir, .{ .max_dbs = 1 });
+    defer env.deinit() catch |e| std.debug.panic("Failed to deinit env: error {any}", .{e});
+
+    const txn = try env.transaction(.{ .mode = .ReadWrite });
+    defer txn.abort() catch |e| std.debug.panic("Failed to abort transaction: error {any}", .{e});
+
+    const db = try txn.database("dups", .{ .create = true, .dup_sort = true });
+    try db.set("k", "a", .{ .append_dup = true, .no_dup_data = true });
+    try db.set("k", "b", SetFlag.AppendDup.with(.NoDupData));
+    try std.testing.expectError(error.MDBX_KEYEXIST, db.set("k", "b", SetFlag.AppendDup.with(.NoDupData)));
+    try std.testing.expectError(error.MDBX_KEYEXIST, db.set("k", "a", .NoDupData));
+}
