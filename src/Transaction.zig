@@ -61,6 +61,24 @@ pub fn nested(self: Transaction, options: Options) !Transaction {
     return txn;
 }
 
+/// Start a read-only clone of this transaction, reading the same MVCC snapshot.
+/// Cloning a read-write transaction yields a read-only transaction over the
+/// original snapshot (without uncommitted changes); write transactions with
+/// pending changes cannot be cloned. Cloning read-only transactions requires
+/// the environment to be opened with `no_sticky_threads`.
+pub fn clone(self: Transaction, context: ?*anyopaque) !Transaction {
+    var txn = Transaction{};
+    try self.cloneInto(&txn, context);
+    return txn;
+}
+
+/// Like `clone`, but reuses `target` if it holds a read-only transaction
+/// previously stopped via `reset()`. If `target.ptr` is null, a new
+/// transaction handle is created and stored there.
+pub fn cloneInto(self: Transaction, target: *Transaction, context: ?*anyopaque) !void {
+    try throw(c.mdbx_txn_clone(self.ptr, &target.ptr, context));
+}
+
 /// Abort the transaction
 pub fn abort(self: Transaction) !void {
     try throw(c.mdbx_txn_abort(self.ptr));

@@ -330,6 +330,56 @@ test "transaction reset renew park and userctx" {
     try rtxn.abort();
 }
 
+test "transaction clone" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const env = try open(std.testing.io, tmp.dir, .{ .no_sticky_threads = true });
+    defer env.deinit() catch |e| std.debug.panic("Failed to deinit env: error {any}", .{e});
+
+    {
+        var wtxn = try env.transaction(.{ .mode = .ReadWrite });
+        errdefer wtxn.abort() catch |e| std.debug.panic("Failed to abort transaction: error {any}", .{e});
+        try wtxn.set("k", "v1", .Upsert);
+        try wtxn.commit();
+    }
+
+    var ctx_value: u8 = 7;
+    var rtxn = try env.transaction(.{ .mode = .ReadOnly });
+    defer rtxn.abort() catch |e| std.debug.panic("Failed to abort transaction: error {any}", .{e});
+
+    var cloned = try rtxn.clone(&ctx_value);
+    try expectEqual(rtxn.id(), cloned.id());
+    try expectEqual(@as(*u8, @ptrCast(cloned.getUserctx().?)), &ctx_value);
+
+    // Commit a newer version; both the original and the clone keep the old snapshot.
+    {
+        var wtxn = try env.transaction(.{ .mode = .ReadWrite });
+        errdefer wtxn.abort() catch |e| std.debug.panic("Failed to abort transaction: error {any}", .{e});
+        try wtxn.set("k", "v2", .Upsert);
+        try wtxn.commit();
+    }
+    try expectEqualSlices(u8, "v1", (try cloned.get("k")).?);
+    try expectEqualSlices(u8, "v1", (try rtxn.get("k")).?);
+
+    // Reuse a reset handle.
+    try cloned.reset();
+    try rtxn.cloneInto(&cloned, null);
+    try expectEqual(rtxn.id(), cloned.id());
+    try expectEqualSlices(u8, "v1", (try cloned.get("k")).?);
+    try cloned.abort();
+
+    // Cloning a clean read-write transaction gives a read-only view of its snapshot.
+    {
+        var wtxn = try env.transaction(.{ .mode = .ReadWrite });
+        defer wtxn.abort() catch |e| std.debug.panic("Failed to abort transaction: error {any}", .{e});
+        var wclone = try wtxn.clone(null);
+        defer wclone.abort() catch |e| std.debug.panic("Failed to abort transaction: error {any}", .{e});
+        try expect(wclone.getFlags().read_only);
+        try expectEqualSlices(u8, "v2", (try wclone.get("k")).?);
+    }
+}
+
 test "batched io basic and concurrent" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
